@@ -5,14 +5,28 @@ import asyncio
 
 import telegram
 from telegram import constants
-from telegram import Update, InlineQueryResultArticle, InputTextMessageContent, BotCommand
+from telegram import Message, MessageEntity, Update, InlineQueryResultArticle, InputTextMessageContent, BotCommand
 from telegram.error import RetryAfter, TimedOut
 from telegram.ext import ApplicationBuilder, ContextTypes, CommandHandler, MessageHandler, \
-    filters, InlineQueryHandler, Application
+    filters, InlineQueryHandler, Application, CallbackContext
 
 from pydub import AudioSegment
 from openai_helper import OpenAIHelper, ChatConfig
 from usage_tracker import UsageTracker
+
+
+def message_text(message: Message) -> str:
+    """
+    Returns the text of a message, excluding any bot commands.
+    """
+    message_text = message.text
+    if message_text is None:
+        return ''
+
+    for _, text in sorted(message.parse_entities([MessageEntity.BOT_COMMAND]).items(), key=(lambda item: item[0].offset)):
+        message_text = message_text.replace(text, '').strip()
+
+    return message_text if len(message_text) > 0 else ''
 
 
 class ChatGPTTelegramBot:
@@ -34,12 +48,13 @@ class ChatGPTTelegramBot:
                                                     '(e.g. /reset You are a helpful assistant)'),
             BotCommand(command='image', description='Generate image from prompt (e.g. /image cat)'),
             BotCommand(command='stats', description='Get your current usage statistics'),
-            BotCommand(command='model', description='Set the model to use (e.g. /model gpt-4)'),
+            BotCommand(command='resend', description='Resend the latest message')
         ]
         self.disallowed_message = "Sorry, you are not allowed to use this bot. You can check out the source code at " \
                                   "https://github.com/n3d1117/chatgpt-telegram-bot"
         self.budget_limit_message = "Sorry, you have reached your monthly usage limit."
         self.usage = {}
+        self.last_message = {}
 
     async def help(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         """
@@ -60,11 +75,13 @@ class ChatGPTTelegramBot:
         Returns token usage statistics for current day and month.
         """
         if not await self.is_allowed(update):
-            logging.warning(f'User {update.message.from_user.name} is not allowed to request their usage statistics')
+            logging.warning(f'User {update.message.from_user.name} (id: {update.message.from_user.id}) '
+                f'is not allowed to request their usage statistics')
             await self.send_disallowed_message(update, context)
             return
 
-        logging.info(f'User {update.message.from_user.name} requested their usage statistics')
+        logging.info(f'User {update.message.from_user.name} (id: {update.message.from_user.id}) '
+            f'requested their usage statistics')
         
         user_id = update.message.from_user.id
         if user_id not in self.usage:
@@ -108,19 +125,46 @@ class ChatGPTTelegramBot:
         usage_text = text_current_conversation + text_today + text_month + text_budget
         await update.message.reply_text(usage_text, parse_mode=constants.ParseMode.MARKDOWN)
 
+    async def resend(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """
+        Resend the last request
+        """
+        if not await self.is_allowed(update):
+            logging.warning(f'User {update.message.from_user.name}  (id: {update.message.from_user.id})'
+                            f' is not allowed to resend the message')
+            await self.send_disallowed_message(update, context)
+            return
+
+        chat_id = update.effective_chat.id
+        if chat_id not in self.last_message:
+            logging.warning(f'User {update.message.from_user.name} (id: {update.message.from_user.id})'
+                            f' does not have anything to resend')
+            await context.bot.send_message(chat_id=chat_id, text="You have nothing to resend")
+            return
+
+        # Update message text, clear self.last_message and send the request to prompt
+        logging.info(f'Resending the last prompt from user: {update.message.from_user.name} '
+                     f'(id: {update.message.from_user.id})')
+        with update.message._unfrozen() as message:
+            message.text = self.last_message.pop(chat_id)
+
+        await self.prompt(update=update, context=context)
+
     async def reset(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """
         Resets the conversation.
         """
         if not await self.is_allowed(update):
-            logging.warning(f'User {update.message.from_user.name} is not allowed to reset the conversation')
+            logging.warning(f'User {update.message.from_user.name} (id: {update.message.from_user.id}) '
+                f'is not allowed to reset the conversation')
             await self.send_disallowed_message(update, context)
             return
 
-        logging.info(f'Resetting the conversation for user {update.message.from_user.name}...')
+        logging.info(f'Resetting the conversation for user {update.message.from_user.name} '
+            f'(id: {update.message.from_user.id})...')
 
         chat_id = update.effective_chat.id
-        reset_content = update.message.text.replace('/reset', '').strip()
+        reset_content = message_text(update.message)
         self.openai.reset_chat_history(chat_id=chat_id, content=reset_content)
         await context.bot.send_message(chat_id=chat_id, text='Done!')
 
@@ -129,57 +173,65 @@ class ChatGPTTelegramBot:
         Generates an image for the given prompt using DALL·E APIs
         """
         if not await self.is_allowed(update):
-            logging.warning(f'User {update.message.from_user.name} is not allowed to generate images')
+            logging.warning(f'User {update.message.from_user.name} (id: {update.message.from_user.id}) '
+                f'is not allowed to generate images')
             await self.send_disallowed_message(update, context)
             return
 
         if not await self.is_within_budget(update):
-            logging.warning(f'User {update.message.from_user.name} reached their usage limit')
+            logging.warning(f'User {update.message.from_user.name} (id: {update.message.from_user.id}) '
+                f'reached their usage limit')
             await self.send_budget_reached_message(update, context)
             return
         
         chat_id = update.effective_chat.id
-        image_query = update.message.text.replace('/image', '').strip()
+        image_query = message_text(update.message)
         if image_query == '':
             await context.bot.send_message(chat_id=chat_id, text='Please provide a prompt! (e.g. /image cat)')
             return
 
-        logging.info(f'New image generation request received from user {update.message.from_user.name}')
+        logging.info(f'New image generation request received from user {update.message.from_user.name} '
+            f'(id: {update.message.from_user.id})')
 
-        await context.bot.send_chat_action(chat_id=chat_id, action=constants.ChatAction.UPLOAD_PHOTO)
-        try:
-            image_url, image_size = await self.openai.generate_image(prompt=image_query)
-            await context.bot.send_photo(
-                chat_id=chat_id,
-                reply_to_message_id=update.message.message_id,
-                photo=image_url
-            )
-            # add image request to users usage tracker
-            user_id = update.message.from_user.id
-            self.usage[user_id].add_image_request(image_size, self.config['image_prices'])
-            # add guest chat request to guest usage tracker
-            if str(user_id) not in self.config['allowed_user_ids'].split(',') and 'guests' in self.usage:
-                self.usage["guests"].add_image_request(image_size, self.config['image_prices'])
+        async def _generate():
+            try:
+                image_url, image_size = await self.openai.generate_image(prompt=image_query)
+                await context.bot.send_photo(
+                    chat_id=chat_id,
+                    reply_to_message_id=update.message.message_id,
+                    photo=image_url
+                )
+                # add image request to users usage tracker
+                user_id = update.message.from_user.id
+                self.usage[user_id].add_image_request(image_size, self.config['image_prices'])
+                # add guest chat request to guest usage tracker
+                if str(user_id) not in self.config['allowed_user_ids'].split(',') and 'guests' in self.usage:
+                    self.usage["guests"].add_image_request(image_size, self.config['image_prices'])
 
-        except Exception as e:
-            logging.exception(e)
-            await context.bot.send_message(
-                chat_id=chat_id,
-                reply_to_message_id=update.message.message_id,
-                text=f'Failed to generate image: {str(e)}'
-            )
+            except Exception as e:
+                logging.exception(e)
+                await context.bot.send_message(
+                    chat_id=chat_id,
+                    reply_to_message_id=update.message.message_id,
+                    text=f'Failed to generate image: {str(e)}',
+                    parse_mode=constants.ParseMode.MARKDOWN
+                )
+
+        await self.wrap_with_indicator(update, context, constants.ChatAction.UPLOAD_PHOTO, _generate)
 
     async def transcribe(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """
         Transcribe audio messages.
         """
         if not await self.is_allowed(update):
-            logging.warning(f'User {update.message.from_user.name} is not allowed to transcribe audio messages')
+            logging.warning(f'User {update.message.from_user.name} (id: {update.message.from_user.id}) '
+                f'is not allowed to transcribe audio messages')
             await self.send_disallowed_message(update, context)
             return
-        
+
         if not await self.is_within_budget(update):
-            logging.warning(f'User {update.message.from_user.name} reached their usage limit')
+            logging.warning(f'User {update.message.from_user.name} (id: {update.message.from_user.id}) '
+                f'reached their usage limit')
             await self.send_budget_reached_message(update, context)
             return
 
@@ -188,126 +240,136 @@ class ChatGPTTelegramBot:
             return
 
         chat_id = update.effective_chat.id
-        await context.bot.send_chat_action(chat_id=chat_id, action=constants.ChatAction.TYPING)
         filename = update.message.effective_attachment.file_unique_id
-        filename_mp3 = f'{filename}.mp3'
-        try:
-            media_file = await context.bot.get_file(update.message.effective_attachment.file_id)
-            await media_file.download_to_drive(filename)
-        except Exception as e:
-            logging.exception(e)
-            await context.bot.send_message(
-                chat_id=chat_id,
-                reply_to_message_id=update.message.message_id,
-                text=f'Failed to download audio file: {str(e)}. Make sure the file is not too large. (max 20MB)'
-            )
-            return
 
-        # detect and extract audio from the attachment with pydub
-        try:
-            audio_track = AudioSegment.from_file(filename)
-            audio_track.export(filename_mp3, format="mp3")
-            logging.info(f'New transcribe request received from user {update.message.from_user.name}')
+        async def _execute():
+            filename_mp3 = f'{filename}.mp3'
 
-        except Exception as e:
-            logging.exception(e)
-            await context.bot.send_message(
-                chat_id=update.effective_chat.id,
-                reply_to_message_id=update.message.message_id,
-                text='Unsupported file type'
-            )
-            if os.path.exists(filename):
-                os.remove(filename)
-            return
+            try:
+                media_file = await context.bot.get_file(update.message.effective_attachment.file_id)
+                await media_file.download_to_drive(filename)
+            except Exception as e:
+                logging.exception(e)
+                await context.bot.send_message(
+                    chat_id=chat_id,
+                    reply_to_message_id=update.message.message_id,
+                    text=f'Failed to download audio file: {str(e)}. Make sure the file is not too large. (max 20MB)',
+                    parse_mode=constants.ParseMode.MARKDOWN
+                )
+                return
 
-        filename_mp3 = f'{filename}.mp3'
+            # detect and extract audio from the attachment with pydub
+            try:
+                audio_track = AudioSegment.from_file(filename)
+                audio_track.export(filename_mp3, format="mp3")
+                logging.info(f'New transcribe request received from user {update.message.from_user.name} '
+                    f'(id: {update.message.from_user.id})')
 
-        user_id = update.message.from_user.id
-        if user_id not in self.usage:
-            self.usage[user_id] = UsageTracker(user_id, update.message.from_user.name)
+            except Exception as e:
+                logging.exception(e)
+                await context.bot.send_message(
+                    chat_id=update.effective_chat.id,
+                    reply_to_message_id=update.message.message_id,
+                    text='Unsupported file type'
+                )
+                if os.path.exists(filename):
+                    os.remove(filename)
+                return
 
-        # send decoded audio to openai
-        try:
+            filename_mp3 = f'{filename}.mp3'
 
-            # Transcribe the audio file
-            transcript = await self.openai.transcribe(filename_mp3)
+            user_id = update.message.from_user.id
+            if user_id not in self.usage:
+                self.usage[user_id] = UsageTracker(user_id, update.message.from_user.name)
 
-            # add transcription seconds to usage tracker
-            transcription_price = self.config['transcription_price']
-            self.usage[user_id].add_transcription_seconds(audio_track.duration_seconds, transcription_price)
+            # send decoded audio to openai
+            try:
 
-            # add guest chat request to guest usage tracker
-            allowed_user_ids = self.config['allowed_user_ids'].split(',')
-            if str(user_id) not in allowed_user_ids and 'guests' in self.usage:
-                self.usage["guests"].add_transcription_seconds(audio_track.duration_seconds, transcription_price)
+                # Transcribe the audio file
+                transcript = await self.openai.transcribe(filename_mp3)
 
-            if self.config['voice_reply_transcript']:
+                # add transcription seconds to usage tracker
+                transcription_price = self.config['transcription_price']
+                self.usage[user_id].add_transcription_seconds(audio_track.duration_seconds, transcription_price)
 
-                # Split into chunks of 4096 characters (Telegram's message limit)
-                transcript_output = f'_Transcript:_\n"{transcript}"'
-                chunks = self.split_into_chunks(transcript_output)
-
-                for index, transcript_chunk in enumerate(chunks):
-                    await context.bot.send_message(
-                        chat_id=chat_id,
-                        reply_to_message_id=update.message.message_id if index == 0 else None,
-                        text=transcript_chunk,
-                        parse_mode=constants.ParseMode.MARKDOWN
-                    )
-            else:
-                # Get the response of the transcript
-                response, total_tokens = await self.openai.get_chat_response(chat_id=chat_id, query=transcript)
-
-                # add chat request to users usage tracker
-                self.usage[user_id].add_chat_tokens(total_tokens, self.config['token_price'])
                 # add guest chat request to guest usage tracker
+                allowed_user_ids = self.config['allowed_user_ids'].split(',')
                 if str(user_id) not in allowed_user_ids and 'guests' in self.usage:
-                    self.usage["guests"].add_chat_tokens(total_tokens, self.config['token_price'])
+                    self.usage["guests"].add_transcription_seconds(audio_track.duration_seconds, transcription_price)
 
-                # Split into chunks of 4096 characters (Telegram's message limit)
-                transcript_output = f'_Transcript:_\n"{transcript}"\n\n_Answer:_\n{response}'
-                chunks = self.split_into_chunks(transcript_output)
+                if self.config['voice_reply_transcript']:
 
-                for index, transcript_chunk in enumerate(chunks):
-                    await context.bot.send_message(
-                        chat_id=chat_id,
-                        reply_to_message_id=update.message.message_id if index == 0 else None,
-                        text=transcript_chunk,
-                        parse_mode=constants.ParseMode.MARKDOWN
-                    )
+                    # Split into chunks of 4096 characters (Telegram's message limit)
+                    transcript_output = f'_Transcript:_\n"{transcript}"'
+                    chunks = self.split_into_chunks(transcript_output)
 
-        except Exception as e:
-            logging.exception(e)
-            await context.bot.send_message(
-                chat_id=chat_id,
-                reply_to_message_id=update.message.message_id,
-                text=f'Failed to transcribe text: {str(e)}'
-            )
-        finally:
-            # Cleanup files
-            if os.path.exists(filename_mp3):
-                os.remove(filename_mp3)
-            if os.path.exists(filename):
-                os.remove(filename)
+                    for index, transcript_chunk in enumerate(chunks):
+                        await context.bot.send_message(
+                            chat_id=chat_id,
+                            reply_to_message_id=update.message.message_id if index == 0 else None,
+                            text=transcript_chunk,
+                            parse_mode=constants.ParseMode.MARKDOWN
+                        )
+                else:
+                    # Get the response of the transcript
+                    response, total_tokens = await self.openai.get_chat_response(chat_id=chat_id, query=transcript)
+
+                    # add chat request to users usage tracker
+                    self.usage[user_id].add_chat_tokens(total_tokens, self.config['token_price'])
+                    # add guest chat request to guest usage tracker
+                    if str(user_id) not in allowed_user_ids and 'guests' in self.usage:
+                        self.usage["guests"].add_chat_tokens(total_tokens, self.config['token_price'])
+
+                    # Split into chunks of 4096 characters (Telegram's message limit)
+                    transcript_output = f'_Transcript:_\n"{transcript}"\n\n_Answer:_\n{response}'
+                    chunks = self.split_into_chunks(transcript_output)
+
+                    for index, transcript_chunk in enumerate(chunks):
+                        await context.bot.send_message(
+                            chat_id=chat_id,
+                            reply_to_message_id=update.message.message_id if index == 0 else None,
+                            text=transcript_chunk,
+                            parse_mode=constants.ParseMode.MARKDOWN
+                        )
+
+            except Exception as e:
+                logging.exception(e)
+                await context.bot.send_message(
+                    chat_id=chat_id,
+                    reply_to_message_id=update.message.message_id,
+                    text=f'Failed to transcribe text: {str(e)}',
+                    parse_mode=constants.ParseMode.MARKDOWN
+                )
+            finally:
+                # Cleanup files
+                if os.path.exists(filename_mp3):
+                    os.remove(filename_mp3)
+                if os.path.exists(filename):
+                    os.remove(filename)
+
+        await self.wrap_with_indicator(update, context, constants.ChatAction.TYPING, _execute)
 
     async def prompt(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """
         React to incoming messages and respond accordingly.
         """
         if not await self.is_allowed(update):
-            logging.warning(f'User {update.message.from_user.name} is not allowed to use the bot')
+            logging.warning(f'User {update.message.from_user.name} (id: {update.message.from_user.id}) '
+                f'is not allowed to use the bot')
             await self.send_disallowed_message(update, context)
             return
 
         if not await self.is_within_budget(update):
-            logging.warning(f'User {update.message.from_user.name} reached their usage limit')
+            logging.warning(f'User {update.message.from_user.name} (id: {update.message.from_user.id}) '
+                f'reached their usage limit')
             await self.send_budget_reached_message(update, context)
             return
         
-        logging.info(f'New message received from user {update.message.from_user.name}')
+        logging.info(f'New message received from user {update.message.from_user.name} (id: {update.message.from_user.id})')
         chat_id = update.effective_chat.id
         user_id = update.message.from_user.id
         prompt = update.message.text
+        self.last_message[chat_id] = prompt
 
         if self.is_group_chat(update):
             trigger_keyword = self.config['group_trigger_keyword']
@@ -320,10 +382,9 @@ class ChatGPTTelegramBot:
                     logging.warning('Message does not start with trigger keyword, ignoring...')
                     return
 
-        await context.bot.send_chat_action(chat_id=chat_id, action=constants.ChatAction.TYPING)
-
         try:
             if self.config['stream']:
+                await context.bot.send_chat_action(chat_id=chat_id, action=constants.ChatAction.TYPING)
                 is_group_chat = self.is_group_chat(update)
 
                 stream_response = self.openai.get_chat_response_stream(chat_id=chat_id, query=prompt)
@@ -403,18 +464,21 @@ class ChatGPTTelegramBot:
                         total_tokens = int(tokens)
 
             else:
-                response, total_tokens = await self.openai.get_chat_response(chat_id=chat_id, query=prompt)
+                async def _reply():
+                    response, total_tokens = await self.openai.get_chat_response(chat_id=chat_id, query=prompt)
 
-                # Split into chunks of 4096 characters (Telegram's message limit)
-                chunks = self.split_into_chunks(response)
+                    # Split into chunks of 4096 characters (Telegram's message limit)
+                    chunks = self.split_into_chunks(response)
 
-                for index, chunk in enumerate(chunks):
-                    await context.bot.send_message(
-                        chat_id=chat_id,
-                        reply_to_message_id=update.message.message_id if index == 0 else None,
-                        text=chunk,
-                        parse_mode=constants.ParseMode.MARKDOWN
-                    )
+                    for index, chunk in enumerate(chunks):
+                        await context.bot.send_message(
+                            chat_id=chat_id,
+                            reply_to_message_id=update.message.message_id if index == 0 else None,
+                            text=chunk,
+                            parse_mode=constants.ParseMode.MARKDOWN
+                        )
+
+                await self.wrap_with_indicator(update, context, constants.ChatAction.TYPING, _reply)
 
             try:
                 # add chat request to users usage tracker
@@ -431,7 +495,8 @@ class ChatGPTTelegramBot:
             await context.bot.send_message(
                 chat_id=chat_id,
                 reply_to_message_id=update.message.message_id,
-                text=f'Failed to get response: {str(e)}'
+                text=f'Failed to get response: {str(e)}',
+                parse_mode=constants.ParseMode.MARKDOWN
             )
 
     async def inline_query(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -487,6 +552,18 @@ class ChatGPTTelegramBot:
         except Exception as e:
             logging.warning(str(e))
             raise e
+
+    async def wrap_with_indicator(self, update: Update, context: CallbackContext, chat_action: constants.ChatAction, coroutine):
+        """
+        Wraps a coroutine while repeatedly sending a chat action to the user.
+        """
+        task = context.application.create_task(coroutine(), update=update)
+        while not task.done():
+            context.application.create_task(update.effective_chat.send_action(chat_action))
+            try:
+                await asyncio.wait_for(asyncio.shield(task), 4.5)
+            except asyncio.TimeoutError:
+                pass
 
     async def send_disallowed_message(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """
@@ -554,7 +631,8 @@ class ChatGPTTelegramBot:
                 if await self.is_user_in_group(update, user):
                     logging.info(f'{user} is a member. Allowing group chat message...')
                     return True
-            logging.info(f'Group chat messages from user {update.message.from_user.name} are not allowed')
+            logging.info(f'Group chat messages from user {update.message.from_user.name} '
+                f'(id: {update.message.from_user.id}) are not allowed')
 
         return False
 
@@ -641,7 +719,8 @@ class ChatGPTTelegramBot:
                         return True
                     logging.warning('Monthly guest budget for group chats used up.')
                     return False
-            logging.info(f'Group chat messages from user {update.message.from_user.name} are not allowed')
+            logging.info(f'Group chat messages from user {update.message.from_user.name} '
+                f'(id: {update.message.from_user.id}) are not allowed')
         return False
 
     def config_updater(self, field):
@@ -698,6 +777,7 @@ class ChatGPTTelegramBot:
         application.add_handler(CommandHandler('image', self.image))
         application.add_handler(CommandHandler('start', self.help))
         application.add_handler(CommandHandler('stats', self.stats))
+        application.add_handler(CommandHandler('resend', self.resend))
         application.add_handler(MessageHandler(
             filters.AUDIO | filters.VOICE | filters.Document.AUDIO |
             filters.VIDEO | filters.VIDEO_NOTE | filters.Document.VIDEO,

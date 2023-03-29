@@ -1,6 +1,3 @@
-> **Note**
-> GPT-4 support will be added as soon as APIs are released to the public!
-
 # ChatGPT Telegram Bot
 ![python-version](https://img.shields.io/badge/python-3.9-blue.svg)
 [![openai-version](https://img.shields.io/badge/openai-0.27.2-orange.svg)](https://openai.com/)
@@ -27,6 +24,8 @@ A [Telegram bot](https://core.telegram.org/bots/api) that integrates with OpenAI
 - [x] (NEW!) Get personal token usage statistics and cost per day/month via the `/stats` command - by [@AlexHTW](https://github.com/AlexHTW)
 - [x] (NEW!) User budgets and guest budgets - by [@AlexHTW](https://github.com/AlexHTW)
 - [x] (NEW!) Stream support
+- [x] (NEW!) GPT-4 support
+  - If you have access to the GPT-4 API, simply change the `OPENAI_MODEL` parameter to `gpt-4`
 
 ## Additional features - help needed!
 - [ ] Add session persistence ([#70](https://github.com/n3d1117/chatgpt-telegram-bot/issues/70), [#71](https://github.com/n3d1117/chatgpt-telegram-bot/issues/71))
@@ -59,12 +58,12 @@ Customize the configuration by copying `.env.example` and renaming it to `.env`,
 | `OPENAI_MODEL`                     | The OpenAI model to use for generating responses                                                                                                                                                                                 | `gpt-3.5-turbo`                |
 | `BACKGROUND`                       | A system message that sets the tone and controls the behavior of the assistant                                                                                                                                                   | `You are a helpful assistant.` |
 | `SHOW_USAGE`                       | Whether to show OpenAI token usage information after each response                                                                                                                                                               | false                          |
-| `STREAM`                           | Whether to stream responses                                                                                                                                                                                                      | true                           |
+| `STREAM`                           | Whether to stream responses. **Note**: incompatible, if enabled, with `N_CHOICES` higher than a1                                                                                                                                 | true                           |
 | `MAX_TOKENS`                       | Upper bound on how many tokens the ChatGPT API will return                                                                                                                                                                       | 1200                           |
 | `MAX_HISTORY_SIZE`                 | Max number of messages to keep in memory, after which the conversation will be summarised to avoid excessive token usage                                                                                                         | 15                             |
 | `MAX_CONVERSATION_AGE_MINUTES`     | Maximum number of minutes a conversation should live since the last message, after which the conversation will be reset                                                                                                          | 180                            |
 | `VOICE_REPLY_WITH_TRANSCRIPT_ONLY` | Whether to answer to voice messages with the transcript only or with a ChatGPT response of the transcript                                                                                                                        | true                           |
-| `N_CHOICES`                        | Number of answers to generate for each input message                                                                                                                                                                             | 1                              |
+| `N_CHOICES`                        | Number of answers to generate for each input message. **Note**: setting this to a number higher than 1 will not work properly if `STREAM` is enabled                                                                             | 1                              |
 | `TEMPERATURE`                      | Number between 0 and 2. Higher values will make the output more random                                                                                                                                                           | 1.0                            |
 | `PRESENCE_PENALTY`                 | Number between -2.0 and 2.0. Positive values penalize new tokens based on whether they appear in the text so far                                                                                                                 | 0                              |
 | `FREQUENCY_PENALTY`                | Number between -2.0 and 2.0. Positive values penalize new tokens based on their existing frequency in the text so far                                                                                                            | 0                              |

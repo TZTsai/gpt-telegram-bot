@@ -17,6 +17,15 @@ GPT_4_32K_MODELS = ("gpt-4-32k", "gpt-4-32k-0314")
 GPT_ALL_MODELS = GPT_3_MODELS + GPT_4_MODELS + GPT_4_32K_MODELS
 
 
+def default_max_tokens(model: str) -> int:
+    """
+    Gets the default number of max tokens for the given model.
+    :param model: The model name
+    :return: The default number of max tokens
+    """
+    return 1200 if model in GPT_3_MODELS else 2400
+
+
 class OpenAIHelper:
     """
     OpenAI ChatGPT helper class.
@@ -256,7 +265,7 @@ class OpenAIHelper:
             encoding = tiktoken.get_encoding("gpt-3.5-turbo")
 
         if model in GPT_3_MODELS:
-            tokens_per_message = 4  # every message follows <im_start>{role/name}\n{content}<im_end>\n
+            tokens_per_message = 4  # every message follows <|start|>{role/name}\n{content}<|end|>\n
             tokens_per_name = -1  # if there's a name, the role is omitted
         elif model in GPT_4_MODELS + GPT_4_32K_MODELS:
             tokens_per_message = 3
@@ -270,7 +279,7 @@ class OpenAIHelper:
                 num_tokens += len(encoding.encode(value))
                 if key == "name":
                     num_tokens += tokens_per_name
-        num_tokens += 2  # every reply is primed with <im_start>assistant
+        num_tokens += 3  # every reply is primed with <|start|>assistant<|message|>
         return num_tokens
 
     def get_grant_balance(self):
