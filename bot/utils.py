@@ -6,6 +6,7 @@ def parse_bool(s: str) -> bool:
         return False
     raise AssertionError("not a boolean value (true/false, 1/0, etc.)")
 
+
 def read_system_prompt(path='system_prompt.txt'):
     try:
         with open(path, encoding='utf8') as f:

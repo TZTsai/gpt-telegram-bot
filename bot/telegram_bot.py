@@ -50,6 +50,9 @@ class ChatGPTTelegramBot:
             BotCommand(command='stats', description='Get your current usage statistics'),
             BotCommand(command='resend', description='Resend the latest message')
         ]
+        for field in ChatConfig.editable_fields:
+            self.commands.append(BotCommand(
+                command=field, description=f'Show/Edit the {field} of ChatGPT'))
         self.disallowed_message = "Sorry, you are not allowed to use this bot. You can check out the source code at " \
                                   "https://github.com/n3d1117/chatgpt-telegram-bot"
         self.budget_limit_message = "Sorry, you have reached your monthly usage limit."
@@ -787,7 +790,7 @@ class ChatGPTTelegramBot:
             constants.ChatType.GROUP, constants.ChatType.SUPERGROUP
         ]))
         
-        for field in ChatConfig.editable_fields():
+        for field in ChatConfig.editable_fields:
             application.add_handler(CommandHandler(field, self.config_updater(field)))
 
         application.add_error_handler(self.error_handler)

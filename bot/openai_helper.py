@@ -328,10 +328,11 @@ class ChatConfig(dict):
         'max_tokens', 'n_choices', 'temperature', 'image_size', 
         'model', 'presence_penalty', 'frequency_penalty'
     ])
-    
-    @classmethod
-    def editable_fields(cls):
-        return [k for k in dir(cls) if not k.startswith('_')]
+
+    editable_fields = frozenset([
+        'temperature', 'max_tokens', 'background', 'image_size', 'model',
+        'show_usage', 'verbose', 'stream', 'max_history_size'
+    ])
     
     def __setitem__(self, key, value):
         assert key in self.fields, f"invalid config field: {key}"
@@ -415,4 +416,3 @@ class ChatConfig(dict):
     @stream.setter
     def stream(self, value: str):
         self['stream'] = parse_bool(value)
-
