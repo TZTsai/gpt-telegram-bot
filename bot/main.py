@@ -5,6 +5,7 @@ from dotenv import load_dotenv
 
 from openai_helper import OpenAIHelper
 from telegram_bot import ChatGPTTelegramBot
+from utils import read_system_prompt
 
 
 def main():
@@ -28,11 +29,12 @@ def main():
     openai_config = {
         'api_key': os.environ['OPENAI_API_KEY'],
         'show_usage': os.environ.get('SHOW_USAGE', 'false').lower() == 'true',
+        'verbose': os.environ.get('VERBOSE', 'false').lower() == 'true',
         'stream': os.environ.get('STREAM', 'true').lower() == 'true',
         'proxy': os.environ.get('PROXY', None),
-        'max_history_size': int(os.environ.get('MAX_HISTORY_SIZE', 15)),
+        'max_history_size': int(os.environ.get('MAX_HISTORY', 15)),
         'max_conversation_age_minutes': int(os.environ.get('MAX_CONVERSATION_AGE_MINUTES', 180)),
-        'assistant_prompt': os.environ.get('ASSISTANT_PROMPT', 'You are a helpful assistant.'),
+        'background': read_system_prompt(),
         'max_tokens': int(os.environ.get('MAX_TOKENS', 1200)),
         'n_choices': int(os.environ.get('N_CHOICES', 1)),
         'temperature': float(os.environ.get('TEMPERATURE', 1.0)),

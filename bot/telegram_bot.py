@@ -11,7 +11,7 @@ from telegram.ext import ApplicationBuilder, ContextTypes, CommandHandler, Messa
     filters, InlineQueryHandler, Application
 
 from pydub import AudioSegment
-from openai_helper import OpenAIHelper
+from openai_helper import OpenAIHelper, ChatConfig
 from usage_tracker import UsageTracker
 
 
@@ -33,7 +33,8 @@ class ChatGPTTelegramBot:
             BotCommand(command='reset', description='Reset the conversation. Optionally pass high-level instructions '
                                                     '(e.g. /reset You are a helpful assistant)'),
             BotCommand(command='image', description='Generate image from prompt (e.g. /image cat)'),
-            BotCommand(command='stats', description='Get your current usage statistics')
+            BotCommand(command='stats', description='Get your current usage statistics'),
+            BotCommand(command='model', description='Set the model to use (e.g. /model gpt-4)'),
         ]
         self.disallowed_message = "Sorry, you are not allowed to use this bot. You can check out the source code at " \
                                   "https://github.com/n3d1117/chatgpt-telegram-bot"
@@ -53,7 +54,6 @@ class ChatGPTTelegramBot:
                     '\n\n' + \
                     "Open source at https://github.com/n3d1117/chatgpt-telegram-bot"
         await update.message.reply_text(help_text, disable_web_page_preview=True)
-
 
     async def stats(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """
@@ -644,6 +644,31 @@ class ChatGPTTelegramBot:
             logging.info(f'Group chat messages from user {update.message.from_user.name} are not allowed')
         return False
 
+    def config_updater(self, field):
+        """
+        A factory of command callbacks to update the config of ChatGPT.
+        """
+        async def update_config(update, context):
+            if not await self.is_allowed(update):
+                logging.warning(f'User {update.message.from_user.name} is not allowed to update the config of ChatGPT.')
+                await self.send_disallowed_message(update, context)
+                return
+
+            chat_id = update.effective_chat.id
+            value = update.message.text.replace('/'+field, '').strip()
+            
+            if value == '':
+                await context.bot.send_message(chat_id=chat_id, text=str(self.openai.config[field]))
+                return
+
+            try:
+                setattr(self.openai.config, field, value)
+                logging.info(f'{update.message.from_user.name} has set {field} to {value}')
+            except AssertionError as e:
+                await context.bot.send_message(chat_id=chat_id, text=str(e))
+
+        return update_config
+
     def split_into_chunks(self, text: str, chunk_size: int = 4096) -> list[str]:
         """
         Splits a string into chunks of a given size.
@@ -681,6 +706,9 @@ class ChatGPTTelegramBot:
         application.add_handler(InlineQueryHandler(self.inline_query, chat_types=[
             constants.ChatType.GROUP, constants.ChatType.SUPERGROUP
         ]))
+        
+        for field in ChatConfig.editable_fields():
+            application.add_handler(CommandHandler(field, self.config_updater(field)))
 
         application.add_error_handler(self.error_handler)
 

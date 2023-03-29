@@ -1,14 +1,14 @@
 import datetime
 import logging
-
 import tiktoken
-
-import openai
-
 import requests
 import json
 from datetime import date
 from calendar import monthrange
+
+import openai
+
+from utils import parse_bool
 
 # Models can be found here: https://platform.openai.com/docs/models/overview
 GPT_3_MODELS = ("gpt-3.5-turbo", "gpt-3.5-turbo-0301")
@@ -16,19 +16,20 @@ GPT_4_MODELS = ("gpt-4", "gpt-4-0314")
 GPT_4_32K_MODELS = ("gpt-4-32k", "gpt-4-32k-0314")
 GPT_ALL_MODELS = GPT_3_MODELS + GPT_4_MODELS + GPT_4_32K_MODELS
 
+
 class OpenAIHelper:
     """
-    ChatGPT helper class.
+    OpenAI ChatGPT helper class.
     """
 
-    def __init__(self, config: dict):
+    def __init__(self, config):
         """
         Initializes the OpenAI helper class with the given configuration.
         :param config: A dictionary containing the GPT configuration
         """
         openai.api_key = config['api_key']
         openai.proxy = config['proxy']
-        self.config = config
+        self.config = ChatConfig(config)
         self.conversations: dict[int: list] = {}  # {chat_id: history}
         self.last_updated: dict[int: datetime] = {}  # {chat_id: last_update_timestamp}
 
@@ -188,7 +189,7 @@ class OpenAIHelper:
         Resets the conversation history.
         """
         if content == '':
-            content = self.config['assistant_prompt']
+            content = self.config['background']
         self.conversations[chat_id] = [{"role": "system", "content": content}]
 
     def __max_age_reached(self, chat_id) -> bool:
@@ -306,3 +307,103 @@ class OpenAIHelper:
         billing_data = json.loads(response.text)
         usage_month = billing_data["total_usage"] / 100 # convert cent amount to dollars
         return usage_month
+    
+
+class ChatConfig(dict):
+    """
+    Configuration of ChatGPT.
+    """
+    fields = frozenset([
+        'api_key', 'show_usage', 'verbose', 'stream', 'proxy',
+        'max_history_size', 'max_conversation_age_minutes', 'background',
+        'max_tokens', 'n_choices', 'temperature', 'image_size', 
+        'model', 'presence_penalty', 'frequency_penalty'
+    ])
+    
+    @classmethod
+    def editable_fields(cls):
+        return [k for k in dir(cls) if not k.startswith('_')]
+    
+    def __setitem__(self, key, value):
+        assert key in self.fields, f"invalid config field: {key}"
+        super().__setitem__(key, value)
+    
+    @property
+    def temperature(self) -> float:
+        return self['temperature']
+    
+    @temperature.setter
+    def temperature(self, value: str):
+        value = float(value)
+        assert 0.0 <= value <= 2.0, "temperature must be between 0.0 and 2.0"
+        self['temperature'] = value
+    
+    @property
+    def model(self) -> str:
+        return self['model']
+    
+    @model.setter
+    def model(self, value: str):
+        assert value in GPT_ALL_MODELS, f"model must be one of {GPT_ALL_MODELS}"
+        self['model'] = value
+        
+    @property
+    def max_tokens(self) -> int:
+        return self['max_tokens']
+    
+    @max_tokens.setter
+    def max_tokens(self, value: str):
+        value = int(value)
+        assert value > 0, "max_tokens must be greater than 0"
+        self['max_tokens'] = value
+        
+    @property
+    def background(self) -> str:
+        return self['background']
+    
+    @background.setter
+    def background(self, value: str):
+        self['background'] = value
+        
+    @property
+    def image_size(self) -> int:
+        return self['image_size']
+    
+    @image_size.setter
+    def image_size(self, value: str):
+        self['image_size'] = int(value)
+        
+    @property
+    def show_usage(self) -> bool:
+        return self['show_usage']
+    
+    @show_usage.setter
+    def show_usage(self, value: str):
+        self['show_usage'] = parse_bool(value)
+        
+    @property
+    def verbose(self) -> bool:
+        return self['verbose']
+    
+    @verbose.setter
+    def verbose(self, value: str):
+        self['show_usage'] = parse_bool(value)
+        
+    @property
+    def max_history_size(self) -> int:
+        return self['max_history_size']
+    
+    @max_history_size.setter
+    def max_history_size(self, value: str):
+        value = int(value)
+        assert value > 0, "max_history_size must be greater than 0"
+        self['max_history_size'] = value
+        
+    @property
+    def stream(self) -> bool:
+        return self['stream']
+    
+    @stream.setter
+    def stream(self, value: str):
+        self['stream'] = parse_bool(value)
+
