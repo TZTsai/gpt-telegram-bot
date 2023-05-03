@@ -1,10 +1,8 @@
 import sys
 import code
 import builtins
-import requests
-import requests
 from importlib import import_module
-from .restricted import safe_globals
+# from .restricted import safe_globals
 
 
 ETX = chr(3)  # End of text, Ctrl-C
@@ -25,11 +23,6 @@ def safe_import(name, *args, **kwargs):
         return import_module(name)
     else:
         raise ImportError(f'import {name} is not allowed')
-
-def fetch(url, method='GET', headers=None, params=None, data=None, json=None):
-    response = requests.request(method, url, headers=headers, params=params, data=data, json=json)
-    response.raise_for_status() # raises exception if the status code is not 200 OK
-    return response.text
 
 def read_line():
     buf = []
@@ -58,7 +51,7 @@ class PythonConsole(code.InteractiveConsole):
         #     enumerate=enumerate, getattr=getattr, hasattr=hasattr,
         #     fetch=fetch, requests=requests,
         # )
-        self.locals = {'__builtins__': vars(builtins), 'fetch': fetch}
+        self.locals = {'__builtins__': vars(builtins)}
 
     def interact(self):
         self.info('Started')
@@ -75,7 +68,7 @@ class PythonConsole(code.InteractiveConsole):
                 self.push('\n')  # end an indent block
 
             more = self.push(line)
-            
+
             if end == ETX:  # end of message
                 if more:  # incomplete 
                     self.write("SyntaxError: unexpected EOF while parsing\n"+ETX)

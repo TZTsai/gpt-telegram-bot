@@ -1,3 +1,4 @@
+import re
 import datetime
 import logging
 import tiktoken
@@ -15,6 +16,10 @@ GPT_3_MODELS = ("gpt-3.5-turbo", "gpt-3.5-turbo-0301")
 GPT_4_MODELS = ("gpt-4", "gpt-4-0314")
 GPT_4_32K_MODELS = ("gpt-4-32k", "gpt-4-32k-0314")
 GPT_ALL_MODELS = GPT_3_MODELS + GPT_4_MODELS + GPT_4_32K_MODELS
+
+# the plugin pattern must have two groups, the first one is the plugin name, the second one is the plugin content
+PLUGIN_PATTERN = re.compile(r"^🔗(?P<plugin>\w+)\s+(?P<request>.*)$",
+                            re.DOTALL | re.MULTILINE)
 
 
 def default_max_tokens(model: str) -> int:
@@ -159,6 +164,19 @@ class OpenAIHelper:
 
         except Exception as e:
             raise Exception(f'⚠️ _An error has occurred_ ⚠️\n{str(e)}') from e
+        
+    async def __plugin_handler(self, response: str) -> str:
+        """
+        Handles plugin responses.
+        :param response: The response from the model
+        :return: The response from the model, or the plugin response
+        """
+        match = PLUGIN_PATTERN.search(response)
+        if match is not None:
+            plugin = match['plugin']
+            if plugin in self.plugins:
+                self.plugins[plugin].handle(match['content'])
+        return response
 
     async def generate_image(self, prompt: str) -> tuple[str, str]:
         """
@@ -223,14 +241,14 @@ class OpenAIHelper:
         """
         self.conversations[chat_id].append({"role": role, "content": content})
 
-    async def __summarise(self, conversation) -> str:
+    async def __summarise(self, conversation, maxlen=700) -> str:
         """
         Summarises the conversation history.
         :param conversation: The conversation history
         :return: The summary
         """
         messages = [
-            { "role": "assistant", "content": "Summarize this conversation in 700 characters or less" },
+            { "role": "assistant", "content": f"Summarize this conversation in {maxlen} characters or less" },
             { "role": "user", "content": str(conversation) }
         ]
         response = await openai.ChatCompletion.acreate(
@@ -354,6 +372,10 @@ class ChatConfig(dict):
     
     @model.setter
     def model(self, value: str):
+        if value in ['gpt-3', 'gpt3']:
+            value = 'gpt-3.5-turbo'
+        elif value in ['gpt4']:
+            value = 'gpt-4'
         assert value in GPT_ALL_MODELS, f"model must be one of {GPT_ALL_MODELS}"
         self['model'] = value
         

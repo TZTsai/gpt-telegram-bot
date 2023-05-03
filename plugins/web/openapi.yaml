@@ -1,0 +1,19 @@
+openapi: 3.0.1
+info:
+  title: Web
+  description: You can use this plugin to browse the Internet.
+  version: 'v1'
+servers:
+  - url: PLUGIN_HOSTNAME
+paths:
+  /:
+    post:
+      operationId: get
+      summary: Get the webpage content of a URL
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: string

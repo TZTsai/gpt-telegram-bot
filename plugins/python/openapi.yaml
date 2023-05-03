@@ -1,0 +1,19 @@
+openapi: 3.0.1
+info:
+  title: Python Interpreter
+  description: A standard Python interpreter.
+  version: 'v1'
+servers:
+  - url: PLUGIN_HOSTNAME
+paths:
+  /
+    post:
+      operationId: exec
+      summary: Execute one or more lines of Python code and send back the outputs in stdout and stderr.
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object

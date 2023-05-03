@@ -1,0 +1,19 @@
+openapi: 3.0.1
+info:
+  title: Wolfram Alpha
+  description: You can use the search and computation engine of Wolfram Alpha for its curated knowledge-base and scientific computation. You should ensure the query is interpretable by Wolfram Alpha, and use Wolfram Language if necessary.
+  version: 'v1'
+servers:
+  - url: PLUGIN_HOSTNAME
+paths:
+  /:
+    post:
+      operationId: search
+      summary: send a query to Wolfram Alpha
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object

@@ -1,0 +1,21 @@
+openapi: 3.0.1
+info:
+    title: Bing
+    description: You can use Bing as a web search engine, a world clock, or a calculator.
+    version: "v1"
+servers:
+    - url: PLUGIN_HOSTNAME
+paths:
+    /:
+        post:
+            operationId: search
+            summary: Add a todo to the list
+            responses:
+                "200":
+                    description: OK
+    /calc:
+        post:
+            operationId: calc
+    /time:
+        post:
+            operationId: clock
