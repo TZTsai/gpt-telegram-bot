@@ -8,8 +8,8 @@ servers:
 paths:
   /
     post:
-      operationId: exec
-      summary: Execute one or more lines of Python code and send back the outputs in stdout and stderr.
+      operationId: run
+      summary: Run Python code and send back stdout and stderr.
       responses:
         "200":
           description: OK

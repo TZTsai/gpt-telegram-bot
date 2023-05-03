@@ -1,5 +1,6 @@
 import os
 import sys
+import bs4
 import json
 import requests
 import argparse
@@ -17,9 +18,18 @@ app = quart_cors.cors(quart.Quart(__name__),
 
 @app.post("/")
 async def get():
-    url = await quart.request.get_data(as_text=True)
+    url = await request.get_data(as_text=True)
     response = requests.get(url).text
     return quart.Response(response=response, status=200)
+
+
+def compress_html(html: str, maxlen: int=4096):
+    soup = bs4.BeautifulSoup(html, "html.parser")
+    for el in soup.find_all('a'):
+        el.replace_with(f"[{el.text.strip()}]({el['href']})")
+    for el in soup.find_all("script,meta,style,button,img,canvas,data,details,embed,footer,form,input,video,source,s,del,audio,iframe".split(',')):
+        pass  # TODO
+    return soup.text[:maxlen]
 
 
 @app.get("/logo.png")
@@ -51,8 +61,8 @@ async def openapi_spec():
 parser = argparse.ArgumentParser()
 parser.add_argument("--host", default="localhost")
 parser.add_argument("--port", type=int)
-args = parser.parse_args()
+opts = parser.parse_args()
 
 
 if __name__ == "__main__":
-    app.run(debug=True, host=args.host, port=args.port)
+    app.run(debug=True, host=opts.host, port=opts.port)

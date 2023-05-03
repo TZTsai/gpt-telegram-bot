@@ -6,6 +6,8 @@ import logging
 import requests
 import subprocess
 
+logging.basicConfig(level=logging.INFO)
+
 _PORT = 34567
 
 
@@ -66,9 +68,11 @@ class Plugin:
     def load_all(cls):
         dir = os.path.dirname(__file__)
         plugins = [cls(name) for name in os.listdir(dir) if name[0] not in '._']
-        cls.instances = {p.name: p for p in plugins if hasattr(p, 'proc')}
-        logging.info(f"Loaded plugins: {', '.join(cls.instances)}")
-
+        cls.instances = {
+            p.name: logging.info(f"Loaded plugin: {p.name}") or p 
+            for p in plugins if hasattr(p, 'proc')
+        }
+        
     @classmethod
     def get_instructions(cls):
         sio = io.StringIO()

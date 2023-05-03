@@ -1,90 +1,65 @@
-import sys
+import io
 import code
-import builtins
-from importlib import import_module
+from contextlib import redirect_stdout, redirect_stderr
+
+# from importlib import import_module
 # from .restricted import safe_globals
 
+# safe_modules = {
+#     'math', 'random', 'time', 'datetime', 'json', 're', 
+#     'itertools', 'functools', 'operator', 'collections', 
+#     'heapq', 'bisect', 'array', 'queue', 'contextlib', 'dataclasses',
+#     'typing', 'abc', 'enum', 'copy', 'requests', 'numbers', 'pprint', 
+#     'numpy', 'scipy', 'pandas', 'matplotlib', 'sklearn'
+# }
 
-ETX = chr(3)  # End of text, Ctrl-C
-EOT = chr(4)  # End of transmission, Ctrl-D
+# def safe_import(name, *args, **kwargs):
+#     if name in safe_modules:
+#         return import_module(name)
+#     else:
+#         raise ImportError(f'import {name} is not allowed')
 
-safe_modules = {
-    'math', 'random', 'time', 'datetime', 'json', 're', 
-    'itertools', 'functools', 'operator', 'collections', 
-    'heapq', 'bisect', 'array', 'queue', 'threading', 'types',
-    'typing', 'abc', 'contextlib', 'dataclasses', 'enum', 'copy',
-    'requests', 'bs4', 'flask', 'opencv', 'ntlk',
-    'numbers', 'pprint', 'numpy', 'scipy', 'pandas', 'matplotlib',
-    'sklearn', 'statsmodels', 'torch', 'tensorflow', 'keras',
-}
-
-def safe_import(name, *args, **kwargs):
-    if name in safe_modules:
-        return import_module(name)
-    else:
-        raise ImportError(f'import {name} is not allowed')
-
-def read_line():
-    buf = []
-    while 1:
-        c = sys.stdin.read(1)
-        if not c or c == EOT:
-            raise KeyboardInterrupt
-        if c in (ETX, '\n'):
-            break
-        buf.append(c)
-    return ''.join(buf), c
+# safe_globals.update(
+#     print=print, __import__=safe_import, vars=vars,
+#     min=min, max=max, dict=dict, list=list, iter=iter,
+#     sum=sum, all=all, any=any, map=map, filter=filter,
+#     enumerate=enumerate, getattr=getattr, 
+# )
 
 
-class PythonConsole(code.InteractiveConsole):
-    name = 'Python Console'
-    
-    def __init__(self, namespace=None, filename="<console>"):
-        super().__init__(namespace, filename)
-        # self.compile = compile_restricted
+class Console(code.InteractiveConsole):
+
+    def __init__(self, namespace=None) -> None:
+        super().__init__(namespace)
         # self.locals = safe_globals
-        # self.locals['__builtins__'].update(
-        #     print=print, __import__=safe_import, vars=vars,
-        #     globals=lambda: self.locals, locals=locals, 
-        #     min=min, max=max, dict=dict, list=list, iter=iter,
-        #     sum=sum, all=all, any=any, map=map, filter=filter,
-        #     enumerate=enumerate, getattr=getattr, hasattr=hasattr,
-        #     fetch=fetch, requests=requests,
-        # )
-        self.locals = {'__builtins__': vars(builtins)}
+        self.stdout = io.StringIO()
+        self.stderr = io.StringIO()
 
-    def interact(self):
-        self.info('Started')
+    def write(self, data: str) -> None:
+        self.stderr.write(data)
         
-        more = False
-        while 1:
-            try:
-                line, end = read_line()
-            except KeyboardInterrupt:
-                self.resetbuffer()
-                break
-            
-            if more and (end == ETX or line and not line[0].isspace()):
-                self.push('\n')  # end an indent block
+    def push(self, line: str) -> bool:
+        with redirect_stdout(self.stdout), redirect_stderr(self.stderr):
+            return super().push(line)
 
-            more = self.push(line)
+    def run(self, code: str) -> dict[str, str]:
+        if not code.strip():
+            return dict(stdout='', stderr='')
 
-            if end == ETX:  # end of message
-                if more:  # incomplete 
-                    self.write("SyntaxError: unexpected EOF while parsing\n"+ETX)
-                    self.resetbuffer()
-                else:
-                    self.info("Finished computing")
-                    self.write(ETX)
+        incomplete = False
+        for line in code.splitlines() + ['']:
+            if incomplete and not line.startswith(tuple(' \t#')):
+                self.push('')
+            incomplete = self.push(line)
+        if incomplete:
+            self.write("SyntaxError: incomplete input")
+            self.resetbuffer()
 
-        self.info('Exited')
-
-    def write(self, data):
-        sys.stdout.write(data)
-        sys.stdout.flush()
-
-    def info(self, data):
-        sys.stderr.write(f"{self.name}: {data}\n")
+        res = dict(stdout=self.stdout.getvalue(), stderr=self.stderr.getvalue())
+        self.stdout = io.StringIO()
+        self.stderr = io.StringIO()
+        return res
 
 
-PythonConsole().interact()
+if __name__ == "__main__":
+    console = Console()

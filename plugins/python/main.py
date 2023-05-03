@@ -1,17 +1,15 @@
 import os
-import sys
 import json
 import argparse
-import subprocess
 
 import quart
 import quart_cors
 from quart import request
 
-
 os.chdir(os.path.dirname(__file__))
 
-console = subprocess.Popen("ipython")
+from console import Console
+console = Console()
 
 # Note: Setting CORS to allow chat.openapi.com is only required when running a localhost plugin
 app = quart_cors.cors(quart.Quart(__name__), 
@@ -19,10 +17,9 @@ app = quart_cors.cors(quart.Quart(__name__),
 
 
 @app.post("/")
-async def execute():
-    code = await quart.request.get_data()
-    stdout, stderr = console.communicate(code)
-    response = dict(stdout=stdout.decode(), stderr=stderr.decode())
+async def run():
+    code = await request.get_data(as_text=True)
+    response = console.run(code)
     return quart.Response(response=json.dumps(response), status=200)
 
 
@@ -55,8 +52,8 @@ async def openapi_spec():
 parser = argparse.ArgumentParser()
 parser.add_argument("--host", default="localhost")
 parser.add_argument("--port", type=int)
-args = parser.parse_args()
+opts = parser.parse_args()
 
 
 if __name__ == "__main__":
-    app.run(debug=True, host=args.host, port=args.port)
+    app.run(debug=True, host=opts.host, port=opts.port)

@@ -1,6 +1,6 @@
 import os
-import sys
 import json
+import requests
 import argparse
 
 import quart
@@ -13,12 +13,22 @@ os.chdir(os.path.dirname(__file__))
 app = quart_cors.cors(quart.Quart(__name__), 
                       allow_origin=["https://chat.openai.com", "localhost"])
 
+WOLFRAM_URL = "http://api.wolframalpha.com/v2/query"
+
+QUERY_PARAMS = {
+    "appid": os.environ["WOLFRAM_APPID"],
+    "format": "image,plaintext",
+    "output": "json",
+}
+
 
 @app.post("/")
 async def query():
-    request = await quart.request.get_data(as_text=True)
-    response = {}  # TODO: send request to Wolfram
+    query = await request.get_data(as_text=True)
+    response = requests.get(WOLFRAM_URL, params={**QUERY_PARAMS, "input": query}).json()
     return quart.Response(response=json.dumps(response), status=200)
+
+# TODO: compress the response
 
 
 @app.get("/logo.png")
@@ -50,8 +60,8 @@ async def openapi_spec():
 parser = argparse.ArgumentParser()
 parser.add_argument("--host", default="localhost")
 parser.add_argument("--port", type=int)
-args = parser.parse_args()
+opts = parser.parse_args()
 
 
 if __name__ == "__main__":
-    app.run(debug=True, host=args.host, port=args.port)
+    app.run(debug=True, host=opts.host, port=opts.port)

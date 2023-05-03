@@ -1,5 +1,4 @@
 import os
-import sys
 import json
 import argparse
 
@@ -18,7 +17,7 @@ _TODOS = {}
 
 @app.post("/todos/<string:username>")
 async def add_todo(username):
-    todo = await quart.request.get_data(as_text=True)
+    todo = await request.get_data(as_text=True)
     _TODOS.setdefault(username, []).append(todo)
     return quart.Response(response='OK', status=200)
 
@@ -67,8 +66,8 @@ async def openapi_spec():
 parser = argparse.ArgumentParser()
 parser.add_argument("--host", default="localhost")
 parser.add_argument("--port", type=int, default=80)
-args = parser.parse_args()
+opts = parser.parse_args()
 
 
 if __name__ == "__main__":
-    app.run(debug=True, host=args.host, port=args.port)
+    app.run(debug=True, host=opts.host, port=opts.port)
